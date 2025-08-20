@@ -276,10 +276,9 @@ class ServiceOrchestrator(DAG):
         access_token = self.services[cur_node].api_key_value
         endpoint = self.services[cur_node].endpoint_path()
 
-        if is_llm_vlm:
+        if is_llm_vlm and  kwargs.get("openai_parameters") is not None:
             access_token = kwargs.get("openai_parameters", None).dict().get("api_key", None)
             endpoint = self.services[cur_node].endpoint_path(kwargs.get("openai_parameters", None).dict().get("base_url", None))
-
         print("Endpoint:", endpoint)
         print("API Key:", access_token)
         if is_llm_vlm and llm_parameters.stream:
