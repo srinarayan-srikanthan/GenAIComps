@@ -405,6 +405,8 @@ class DocSumChatCompletionRequest(ChatCompletionRequest):
     chunk_size: int = -1
     chunk_overlap: int = -1
     type: Optional[str] = None
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
 
 
 class AudioChatCompletionRequest(BaseModel):

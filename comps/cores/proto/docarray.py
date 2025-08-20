@@ -77,6 +77,9 @@ MultimodalDoc = Union[
 class Base64ByteStrDoc(BaseDoc):
     byte_str: str
 
+class OpenAIParams(BaseDoc):
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
 
 class DocSumDoc(BaseDoc):
     text: Optional[str] = None

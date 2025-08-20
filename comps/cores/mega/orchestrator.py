@@ -10,12 +10,19 @@ import re
 import threading
 import time
 from typing import Dict, List
+import ssl
+import urllib3
 
 import aiohttp
 import requests
 from fastapi.responses import StreamingResponse
 from prometheus_client import Gauge, Histogram
 from pydantic import BaseModel
+
+# Disable SSL warnings and verification
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+ssl._create_default_https_context = ssl._create_unverified_context
+
 
 from ..proto.docarray import LLMParams
 from ..telemetry.opea_telemetry import opea_telemetry, tracer
@@ -136,7 +143,15 @@ class ServiceOrchestrator(DAG):
             logger.info(initial_inputs)
 
         timeout = aiohttp.ClientTimeout(total=2000)
-        async with aiohttp.ClientSession(trust_env=True, timeout=timeout) as session:
+
+        # Create SSL context that doesn't verify certificates
+        ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
+
+        connector = aiohttp.TCPConnector(ssl=False)  # Disable SSL verification
+
+        async with aiohttp.ClientSession(trust_env=True, timeout=timeout, connector=connector) as session:
             pending = {
                 asyncio.create_task(
                     self.execute(session, req_start, node, initial_inputs, runtime_graph, llm_parameters, **kwargs)
@@ -251,13 +266,22 @@ class ServiceOrchestrator(DAG):
             for field, value in llm_parameters_dict.items():
                 if inputs.get(field) != value:
                     inputs[field] = value
+
+        print("cur_node: ", cur_node)
+        print("inputs: ", inputs)
         # pre-process
         inputs = self.align_inputs(inputs, cur_node, runtime_graph, llm_parameters_dict, **kwargs)
+
+        #Dynamic API Keyand Base URL
         access_token = self.services[cur_node].api_key_value
-        if access_token:
-            endpoint = self.services[cur_node].endpoint_path(inputs["model"])
-        else:
-            endpoint = self.services[cur_node].endpoint_path(None)
+        endpoint = self.services[cur_node].endpoint_path()
+
+        if is_llm_vlm:
+            access_token = kwargs.get("openai_parameters", None).dict().get("api_key", None)
+            endpoint = self.services[cur_node].endpoint_path(kwargs.get("openai_parameters", None).dict().get("base_url", None))
+
+        print("Endpoint:", endpoint)
+        print("API Key:", access_token)
         if is_llm_vlm and llm_parameters.stream:
             # Still leave to sync requests.post for StreamingResponse
             if LOGFLAG:
@@ -268,6 +292,10 @@ class ServiceOrchestrator(DAG):
                 else contextlib.nullcontext()
             ):
                 if access_token:
+                    dataBody = json.dumps(inputs)
+                    print("Data Body:", dataBody)
+                    print("Endpoint with key:", endpoint)
+                    print("Access Token:", access_token)
                     response = requests.post(
                         url=endpoint,
                         data=json.dumps(inputs),
@@ -275,7 +303,10 @@ class ServiceOrchestrator(DAG):
                         proxies={"http": None},
                         stream=True,
                         timeout=2000,
+                        verify=False,
                     )
+
+                    print("Response With key:", response)
 
                 else:
                     response = requests.post(
@@ -287,7 +318,9 @@ class ServiceOrchestrator(DAG):
                         proxies={"http": None},
                         stream=True,
                         timeout=2000,
+                        verify=False,
                     )
+                    print("Response Without key:", response)
 
             downstream = runtime_graph.downstream(cur_node)
             if downstream:
@@ -319,6 +352,7 @@ class ServiceOrchestrator(DAG):
                                             },
                                             proxies={"http": None},
                                             timeout=2000,
+                                            verify=False,
                                         )
                                     else:
                                         res = requests.post(
@@ -329,6 +363,7 @@ class ServiceOrchestrator(DAG):
                                             },
                                             proxies={"http": None},
                                             timeout=2000,
+                                            verify=False,
                                         )
                                     res_json = res.json()
                                     if "text" in res_json:
@@ -372,6 +407,7 @@ class ServiceOrchestrator(DAG):
                     endpoint,
                     json=input_data,
                     headers={"Content-type": "application/json", "Authorization": f"Bearer {access_token}"},
+                    ssl=False,
                 )
 
             if response.content_type == "audio/wav":
